@@ -87,8 +87,8 @@ st.markdown("A structured financial engine to calculate your take-home pay, tax 
 
 # --- SIDEBAR INPUTS ---
 st.sidebar.header("1. Enter Package Details")
-fixed_ctc = st.sidebar.number_input("Fixed CTC (₹)", min_value=0, value=4100000, step=100000)
-variable_ctc = st.sidebar.number_input("Variable CTC / Bonus (₹)", min_value=0, value=400000, step=50000)
+fixed_ctc = st.sidebar.number_input("Fixed CTC / Base (₹)", min_value=0, value=3000000, step=100000)
+variable_ctc = st.sidebar.number_input("Variable CTC / Bonus (₹)", min_value=0, value=300000, step=50000)
 
 st.sidebar.header("2. Payout Structure")
 variable_payout_mode = st.sidebar.radio(
@@ -100,6 +100,7 @@ variable_payout_mode = st.sidebar.radio(
 st.sidebar.header("3. Structure & Retirals")
 basic_percent = st.sidebar.slider("Basic Salary % (of Fixed)", min_value=30, max_value=60, value=40, step=5)
 pf_type = st.sidebar.radio("Provident Fund (PF) Deduction", ["Full (12% of Basic)", "Capped (₹1,800/mo)"])
+pf_included_in_ctc = st.sidebar.checkbox("Is Employer PF deducted from Fixed CTC?", value=True, help="Uncheck if Employer PF is paid on top of Fixed pay.")
 include_gratuity = st.sidebar.checkbox("Is Gratuity deducted from Fixed CTC?", value=True)
 
 st.sidebar.header("4. Tax Optimizations")
@@ -122,8 +123,12 @@ else:
 employer_nps = (basic * 0.14) if enable_nps else 0.0
 gratuity = (basic * 0.0481) if include_gratuity else 0.0
 
-fixed_gross = fixed_ctc - employer_pf - employer_nps - gratuity
+# Adjust deduction based on whether Employer PF is part of Fixed CTC or added on top
+employer_pf_carveout = employer_pf if pf_included_in_ctc else 0.0
+
+fixed_gross = fixed_ctc - employer_pf_carveout - employer_nps - gratuity
 total_gross = fixed_gross + variable_ctc
+total_comp = fixed_ctc + variable_ctc + (0.0 if pf_included_in_ctc else employer_pf)
 
 standard_deduction = 75000.0
 taxable_income_total = max(0.0, total_gross - standard_deduction)
@@ -160,7 +165,7 @@ bonus_month_in_hand = regular_monthly_in_hand + bonus_per_payout
 # --- TOP LEVEL METRICS ---
 st.write("### 📈 Executive Summary")
 col1, col2, col3, col4, col5 = st.columns(5)
-col1.metric("Total CTC", f"₹{(fixed_ctc + variable_ctc):,.0f}")
+col1.metric("Total Effective Package", f"₹{total_comp:,.0f}", help="Fixed + Variable + Added Retirals")
 col2.metric("Regular In-Hand / mo", f"₹{regular_monthly_in_hand:,.0f}", help="Fixed take-home cash in non-bonus months")
 col3.metric("Bonus Month In-Hand", f"₹{bonus_month_in_hand:,.0f}", help=f"Regular monthly pay + net bonus tranche (₹{bonus_per_payout:,.0f})")
 col4.metric("Total Annual In-Hand", f"₹{annual_total_in_hand:,.0f}", help="Total take-home cash across all 12 months")
@@ -175,13 +180,17 @@ tab1, tab2, tab3 = st.tabs(["🏛️ Waterfall Payslip Breakdown", "🧮 Tax Sla
 with tab1:
     st.markdown("#### **Stage-by-Stage Salary Waterfall**")
     
+    pf_waterfall_note = "12% of Basic (Deducted from Fixed)" if pf_included_in_ctc else "12% of Basic (Added on top of Fixed)"
+    pf_annual_display = f"- ₹{employer_pf:,.0f}" if pf_included_in_ctc else "₹0 (Added on top)"
+    pf_monthly_display = f"- ₹{(employer_pf/12):,.0f}" if pf_included_in_ctc else "₹0"
+
     waterfall_rows = [
         {"Category": "1. Gross CTC", "Component": "Fixed Base CTC", "Annual": f"₹{fixed_ctc:,.0f}", "Monthly": f"₹{(fixed_ctc/12):,.0f}", "Notes": "Total agreed fixed package"},
         {"Category": "1. Gross CTC", "Component": "Variable CTC / Bonus", "Annual": f"₹{variable_ctc:,.0f}", "Monthly": f"₹{(variable_ctc/12):,.0f}", "Notes": "Performance incentive"},
         
-        {"Category": "2. Employer Retirals (Carved from CTC)", "Component": "Employer Provident Fund (PF)", "Annual": f"- ₹{employer_pf:,.0f}", "Monthly": f"- ₹{(employer_pf/12):,.0f}", "Notes": "12% of Basic credited to EPF"},
-        {"Category": "2. Employer Retirals (Carved from CTC)", "Component": "Employer NPS (Sec 80CCD(2))", "Annual": f"- ₹{employer_nps:,.0f}", "Monthly": f"- ₹{(employer_nps/12):,.0f}", "Notes": "Tax-exempt corporate NPS investment"},
-        {"Category": "2. Employer Retirals (Carved from CTC)", "Component": "Gratuity Provision", "Annual": f"- ₹{gratuity:,.0f}", "Monthly": f"- ₹{(gratuity/12):,.0f}", "Notes": "Retained by company, payable at exit"},
+        {"Category": "2. Employer Retirals", "Component": "Employer Provident Fund (PF)", "Annual": pf_annual_display, "Monthly": pf_monthly_display, "Notes": pf_waterfall_note},
+        {"Category": "2. Employer Retirals", "Component": "Employer NPS (Sec 80CCD(2))", "Annual": f"- ₹{employer_nps:,.0f}", "Monthly": f"- ₹{(employer_nps/12):,.0f}", "Notes": "Tax-exempt corporate NPS investment"},
+        {"Category": "2. Employer Retirals", "Component": "Gratuity Provision", "Annual": f"- ₹{gratuity:,.0f}", "Monthly": f"- ₹{(gratuity/12):,.0f}", "Notes": "Retained by company, payable at exit"},
         
         {"Category": "3. Gross Earnings", "Component": "Taxable Gross Salary", "Annual": f"₹{total_gross:,.0f}", "Monthly": f"₹{(total_gross/12):,.0f}", "Notes": "Base amount on monthly payslip"},
         
@@ -226,14 +235,13 @@ with tab2:
     ]
     st.dataframe(pd.DataFrame(summary_tax_rows), use_container_width=True, hide_index=True)
     
-    effective_tax_rate = (total_tax / (fixed_ctc + variable_ctc)) * 100 if (fixed_ctc + variable_ctc) > 0 else 0
+    effective_tax_rate = (total_tax / total_comp) * 100 if total_comp > 0 else 0
     st.info(f"📊 **Effective Tax Rate on Total CTC:** **{effective_tax_rate:.2f}%**")
 
 with tab3:
     st.markdown("#### **Where Does Every Rupee Go? (Total Wealth & Asset Breakdown)**")
     st.markdown("Your total package does not just produce take-home cash—it builds long-term retirement assets:")
     
-    total_comp = fixed_ctc + variable_ctc
     total_pf_accrual = employer_pf + employee_pf
     
     wealth_data = [
@@ -249,5 +257,5 @@ with tab3:
     total_retained_wealth = annual_total_in_hand + total_pf_accrual + employer_nps + gratuity
     st.success(
         f"🎯 **Total Realized Economic Value:** You retain **₹{total_retained_wealth:,.0f}** "
-        f"(**{(total_retained_wealth / total_comp * 100):.1f}%** of your total CTC) between liquid cash and retirement assets."
+        f"(**{(total_retained_wealth / total_comp * 100):.1f}%** of your total package) between liquid cash and retirement assets."
     )
