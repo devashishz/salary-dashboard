@@ -101,7 +101,7 @@ st.sidebar.header("3. Structure & Retirals")
 basic_percent = st.sidebar.slider("Basic Salary % (of Fixed)", min_value=30, max_value=60, value=40, step=5)
 pf_type = st.sidebar.radio("Provident Fund (PF) Deduction", ["Full (12% of Basic)", "Capped (₹1,800/mo)"])
 pf_included_in_ctc = st.sidebar.checkbox("Is Employer PF deducted from Fixed CTC?", value=True, help="Uncheck if Employer PF is paid on top of Fixed pay.")
-include_gratuity = st.sidebar.checkbox("Is Gratuity deducted from Fixed CTC?", value=True)
+include_gratuity = st.sidebar.checkbox("Is Gratuity deducted from Fixed CTC?", value=True, help="Uncheck if Gratuity is provisioned on top of Fixed pay.")
 
 st.sidebar.header("4. Tax Optimizations")
 enable_nps = st.sidebar.toggle(
@@ -121,14 +121,19 @@ else:
     employee_pf = 1800 * 12
 
 employer_nps = (basic * 0.14) if enable_nps else 0.0
-gratuity = (basic * 0.0481) if include_gratuity else 0.0
+gratuity = basic * 0.0481
 
-# Adjust deduction based on whether Employer PF is part of Fixed CTC or added on top
+# Carve-outs (amounts that actually reduce your Fixed Base to arrive at Taxable Gross)
 employer_pf_carveout = employer_pf if pf_included_in_ctc else 0.0
+gratuity_carveout = gratuity if include_gratuity else 0.0
 
-fixed_gross = fixed_ctc - employer_pf_carveout - employer_nps - gratuity
+fixed_gross = fixed_ctc - employer_pf_carveout - employer_nps - gratuity_carveout
 total_gross = fixed_gross + variable_ctc
-total_comp = fixed_ctc + variable_ctc + (0.0 if pf_included_in_ctc else employer_pf)
+
+# Calculate actual Total Effective Package
+added_pf = 0.0 if pf_included_in_ctc else employer_pf
+added_grat = 0.0 if include_gratuity else gratuity
+total_comp = fixed_ctc + variable_ctc + added_pf + added_grat
 
 standard_deduction = 75000.0
 taxable_income_total = max(0.0, total_gross - standard_deduction)
@@ -180,17 +185,32 @@ tab1, tab2, tab3 = st.tabs(["🏛️ Waterfall Payslip Breakdown", "🧮 Tax Sla
 with tab1:
     st.markdown("#### **Stage-by-Stage Salary Waterfall**")
     
-    pf_waterfall_note = "12% of Basic (Deducted from Fixed)" if pf_included_in_ctc else "12% of Basic (Added on top of Fixed)"
-    pf_annual_display = f"- ₹{employer_pf:,.0f}" if pf_included_in_ctc else "₹0 (Added on top)"
-    pf_monthly_display = f"- ₹{(employer_pf/12):,.0f}" if pf_included_in_ctc else "₹0"
+    # Conditional display strings so the math adds up, but the true values are still visible
+    if pf_included_in_ctc:
+        pf_annual_display = f"- ₹{employer_pf_carveout:,.0f}"
+        pf_monthly_display = f"- ₹{(employer_pf_carveout/12):,.0f}"
+        pf_note = "12% of Basic (Deducted from Fixed)"
+    else:
+        pf_annual_display = "₹0"
+        pf_monthly_display = "₹0"
+        pf_note = f"Company pays an extra ₹{employer_pf:,.0f}/yr (Not deducted from Fixed)"
+
+    if include_gratuity:
+        grat_annual_display = f"- ₹{gratuity_carveout:,.0f}"
+        grat_monthly_display = f"- ₹{(gratuity_carveout/12):,.0f}"
+        grat_note = "Retained by company (Deducted from Fixed)"
+    else:
+        grat_annual_display = "₹0"
+        grat_monthly_display = "₹0"
+        grat_note = f"Company provisions an extra ₹{gratuity:,.0f}/yr (Not deducted from Fixed)"
 
     waterfall_rows = [
         {"Category": "1. Gross CTC", "Component": "Fixed Base CTC", "Annual": f"₹{fixed_ctc:,.0f}", "Monthly": f"₹{(fixed_ctc/12):,.0f}", "Notes": "Total agreed fixed package"},
         {"Category": "1. Gross CTC", "Component": "Variable CTC / Bonus", "Annual": f"₹{variable_ctc:,.0f}", "Monthly": f"₹{(variable_ctc/12):,.0f}", "Notes": "Performance incentive"},
         
-        {"Category": "2. Employer Retirals", "Component": "Employer Provident Fund (PF)", "Annual": pf_annual_display, "Monthly": pf_monthly_display, "Notes": pf_waterfall_note},
-        {"Category": "2. Employer Retirals", "Component": "Employer NPS (Sec 80CCD(2))", "Annual": f"- ₹{employer_nps:,.0f}", "Monthly": f"- ₹{(employer_nps/12):,.0f}", "Notes": "Tax-exempt corporate NPS investment"},
-        {"Category": "2. Employer Retirals", "Component": "Gratuity Provision", "Annual": f"- ₹{gratuity:,.0f}", "Monthly": f"- ₹{(gratuity/12):,.0f}", "Notes": "Retained by company, payable at exit"},
+        {"Category": "2. Employer Retirals", "Component": "Employer Provident Fund (PF)", "Annual": pf_annual_display, "Monthly": pf_monthly_display, "Notes": pf_note},
+        {"Category": "2. Employer Retirals", "Component": "Employer NPS (Sec 80CCD(2))", "Annual": f"- ₹{employer_nps:,.0f}" if enable_nps else "₹0", "Monthly": f"- ₹{(employer_nps/12):,.0f}" if enable_nps else "₹0", "Notes": "Tax-exempt corporate NPS investment" if enable_nps else "Not Opted"},
+        {"Category": "2. Employer Retirals", "Component": "Gratuity Provision", "Annual": grat_annual_display, "Monthly": grat_monthly_display, "Notes": grat_note},
         
         {"Category": "3. Gross Earnings", "Component": "Taxable Gross Salary", "Annual": f"₹{total_gross:,.0f}", "Monthly": f"₹{(total_gross/12):,.0f}", "Notes": "Base amount on monthly payslip"},
         
@@ -236,7 +256,7 @@ with tab2:
     st.dataframe(pd.DataFrame(summary_tax_rows), use_container_width=True, hide_index=True)
     
     effective_tax_rate = (total_tax / total_comp) * 100 if total_comp > 0 else 0
-    st.info(f"📊 **Effective Tax Rate on Total CTC:** **{effective_tax_rate:.2f}%**")
+    st.info(f"📊 **Effective Tax Rate on Total Package:** **{effective_tax_rate:.2f}%**")
 
 with tab3:
     st.markdown("#### **Where Does Every Rupee Go? (Total Wealth & Asset Breakdown)**")
@@ -245,11 +265,11 @@ with tab3:
     total_pf_accrual = employer_pf + employee_pf
     
     wealth_data = [
-        {"Asset / Flow Category": "💵 Liquid Cash (Net In-Hand)", "Annual Value": f"₹{annual_total_in_hand:,.0f}", "% of Total CTC": f"{(annual_total_in_hand / total_comp * 100):.1f}%", "Where does it go?": "Directly into your savings bank account"},
-        {"Asset / Flow Category": "📈 Retirement: Provident Fund (Employee + Employer)", "Annual Value": f"₹{total_pf_accrual:,.0f}", "% of Total CTC": f"{(total_pf_accrual / total_comp * 100):.1f}%", "Where does it go?": "EPFO Account (earning tax-free ~8.25% interest)"},
-        {"Asset / Flow Category": "🏛️ Retirement: NPS Tier 1", "Annual Value": f"₹{employer_nps:,.0f}", "% of Total CTC": f"{(employer_nps / total_comp * 100):.1f}%", "Where does it go?": "NPS PRAN Account (Equity/Debt compound growth)"},
-        {"Asset / Flow Category": "🏢 Deferred: Gratuity Provision", "Annual Value": f"₹{gratuity:,.0f}", "% of Total CTC": f"{(gratuity / total_comp * 100):.1f}%", "Where does it go?": "Company Gratuity Trust (paid out upon exiting after 5 yrs)"},
-        {"Asset / Flow Category": "⚖️ Statutory Outflow: Taxes (Income Tax + PT)", "Annual Value": f"₹{(total_tax + pt_annual):,.0f}", "% of Total CTC": f"{((total_tax + pt_annual) / total_comp * 100):.1f}%", "Where does it go?": "Government treasury (TDS & State tax)"},
+        {"Asset / Flow Category": "💵 Liquid Cash (Net In-Hand)", "Annual Value": f"₹{annual_total_in_hand:,.0f}", "% of Total Package": f"{(annual_total_in_hand / total_comp * 100):.1f}%", "Where does it go?": "Directly into your savings bank account"},
+        {"Asset / Flow Category": "📈 Retirement: Provident Fund (Employee + Employer)", "Annual Value": f"₹{total_pf_accrual:,.0f}", "% of Total Package": f"{(total_pf_accrual / total_comp * 100):.1f}%", "Where does it go?": "EPFO Account (earning tax-free ~8.25% interest)"},
+        {"Asset / Flow Category": "🏛️ Retirement: NPS Tier 1", "Annual Value": f"₹{employer_nps:,.0f}", "% of Total Package": f"{(employer_nps / total_comp * 100):.1f}%", "Where does it go?": "NPS PRAN Account (Equity/Debt compound growth)"},
+        {"Asset / Flow Category": "🏢 Deferred: Gratuity Provision", "Annual Value": f"₹{gratuity:,.0f}", "% of Total Package": f"{(gratuity / total_comp * 100):.1f}%", "Where does it go?": "Company Gratuity Trust (paid out upon exiting after 5 yrs)"},
+        {"Asset / Flow Category": "⚖️ Statutory Outflow: Taxes (Income Tax + PT)", "Annual Value": f"₹{(total_tax + pt_annual):,.0f}", "% of Total Package": f"{((total_tax + pt_annual) / total_comp * 100):.1f}%", "Where does it go?": "Government treasury (TDS & State tax)"},
     ]
     
     st.dataframe(pd.DataFrame(wealth_data), use_container_width=True, hide_index=True)
